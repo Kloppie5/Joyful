@@ -1,3 +1,5 @@
+
+import copy
 import ctypes
 from ctypes.wintypes import BOOL, DWORD, HANDLE, ULONG, WCHAR, WORD
 from ctypes import c_ubyte as UBYTE
@@ -9,6 +11,12 @@ joyconR = 0xE0F6B52E0E07
 
 bthprops = ctypes.windll["bthprops.cpl"]
 kernel32 = ctypes.windll["Kernel32.dll"]
+
+NULL = 0
+
+ERROR_INVALID_HANDLE = 6
+ERROR_OUTOFMEMORY = 14
+ERROR_NO_MORE_ITEMS = 259
 
 class SYSTEMTIME(ctypes.Structure):
     _fields_ = [
@@ -85,16 +93,16 @@ class BLUETOOTH_DEVICE_INFO(ctypes.Structure):
     def __init__ ( self, Address = None ) :
         super().__init__()
         self.cbSize = ctypes.sizeof(self)
-        if Address is not None:
+        if Address is not None :
             self.Address = Address
     
     def __str__ ( self ) :
         class_str = hex(self.ulClassofDevice)
-        if class_str[-1] == "L":
+        if class_str[-1] == "L" :
             class_str = class_str[:-1]
-            while len(class_str) < 10:
+            while len(class_str) < 10 :
                 class_str = "0x0" + class_str[2:]
-        return f"Size: {self.cbSize}\nAddress: {str(self.Address)}\nClass Of Device: {class_str}\nConnected: {self.fConnected != 0}\nRemembered: {self.fRemembered != 0}\nAuthenticated: {self.fAuthenticated != 0}\nLast Seen: {str(self.stLastSeen)}\nLast Used: {str(self.stLastUsed)}\nName: {str(self.szName)}"
+        return f"{self.Address} | {class_str} | {self.fConnected} | {self.fRemembered} | {self.fAuthenticated} | {self.stLastSeen} | {self.stLastUsed} | {self.szName}"
 
 class BLUETOOTH_DEVICE_SEARCH_PARAMS(ctypes.Structure):
     _fields_ = [
@@ -119,22 +127,38 @@ class BLUETOOTH_DEVICE_SEARCH_PARAMS(ctypes.Structure):
         self.cTimeoutMultiplier = cTimeoutMultiplier
         self.hRadio = hRadio
 
-def getBluetoothDevices ( ) :
-    print("Getting bluetooth devices...")
-    search_params = BLUETOOTH_DEVICE_SEARCH_PARAMS()
+def getBluetoothDevices ( debug = False ) :
+    if debug : print(f"getBluetoothDevices()")
+    found_devices = []
+    search_params = BLUETOOTH_DEVICE_SEARCH_PARAMS(cTimeoutMultiplier = 10)
     device_info = BLUETOOTH_DEVICE_INFO()
 
     device_find_handle = bthprops.BluetoothFindFirstDevice(ctypes.byref(search_params), ctypes.byref(device_info))
-    if device_find_handle == 0:
+    if device_find_handle == NULL : # handle or NULL on failure
         error_code = kernel32.GetLastError()
         raise Exception(f"BluetoothFindFirstDevice failed with error code {error_code}")
-        
-    print("Found device:")
-    print(device_info)
-    print()
+    found_devices.append(copy.deepcopy(device_info))
+    if debug : print(f"Found device: {device_info}")
 
+    while True :
+        found_more_devices = bthprops.BluetoothFindNextDevice(device_find_handle, ctypes.byref(device_info))
+        if found_more_devices :
+            found_devices.append(copy.deepcopy(device_info))
+            if debug : print(f"Found device: {device_info}")
+            continue
+        error_code = kernel32.GetLastError()
+        if error_code == ERROR_NO_MORE_ITEMS:
+            break
+        else :
+            raise Exception(f"BluetoothFindNextDevice failed with error code {error_code}")
 
-getBluetoothDevices()
+    bthprops.BluetoothFindDeviceClose(device_find_handle) # ignoring return value
+
+    if debug : print(f"Found {len(found_devices)} devices")
+
+    return found_devices
+
+getBluetoothDevices(True)
 
 """
 BluetoothFindNextDevice = ctypes.windll["bthprops.cpl"].BluetoothFindNextDevice
